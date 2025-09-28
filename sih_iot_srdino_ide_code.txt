@@ -1,0 +1,152 @@
+#include <WiFi.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+#include <ESP32Servo.h>
+
+// ==================== CONFIGURATION SECTION ====================
+const int SOIL_MOISTURE_MIN = 300;
+const int SOIL_MOISTURE_MAX = 700;
+const float TEMP_MIN = 27.0;
+const float TEMP_MAX = 32.0;
+
+// Pin Definitions
+#define PUMP_RELAY_PIN 5
+#define SERVO_PIN 13
+#define SOIL_MOISTURE_PIN 34
+#define DHT_PIN 15
+#define DHT_TYPE DHT22
+
+// Relay active state
+#define RELAY_ACTIVE_LEVEL HIGH
+#define RELAY_OFF_STATE (RELAY_ACTIVE_LEVEL)
+
+// Servo settings
+const int SERVO_OFF_POSITION = 0;
+const int SERVO_SPRAY_POSITION = 90;
+
+// ================ END OF CONFIGURATION SECTION ================
+
+// Variables
+bool isSpraying = false;
+DHT dht(DHT_PIN, DHT_TYPE);
+Servo sprayerServo;
+
+void checkConditions() {
+  // Read sensors
+  int soilMoisture = analogRead(SOIL_MOISTURE_PIN);
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+
+  Serial.println("=== Checking Conditions ===");
+  Serial.print("Soil Moisture: "); Serial.println(soilMoisture);
+  Serial.print("Temperature: "); Serial.println(temperature);
+  Serial.print("Humidity: "); Serial.println(humidity);
+  Serial.print("Initial Temperature: "); Serial.println(t);
+  Serial.print("Initial Humidity: "); Serial.println(h);
+
+  // Check conditions
+  bool conditionsMet = true;
+  String message = "Conditions OK for spraying.";
+
+  if (isnan(temperature)) {
+    conditionsMet = false;
+    message = "Error reading temperature sensor.";
+  } else if (temperature < TEMP_MIN || temperature > TEMP_MAX) {
+    conditionsMet = false;
+    message = "Temperature out of acceptable range.";
+  }
+  
+  if (soilMoisture > SOIL_MOISTURE_MAX) {
+    conditionsMet = false;
+    message = "Soil is too wet for spraying.";
+  } else if (soilMoisture < SOIL_MOISTURE_MIN) {
+    conditionsMet = false;
+    message = "Soil is too dry for spraying.";
+  }
+
+  Serial.println(message);
+  Serial.println("============================");
+}
+
+void startSpray() {
+  if (isSpraying) {
+    Serial.println("Already spraying!");
+    return;
+  }
+  isSpraying = true;
+  digitalWrite(PUMP_RELAY_PIN, HIGH);
+  sprayerServo.write(SERVO_SPRAY_POSITION);
+  Serial.println("Spraying started!");
+}
+
+void stopSpray() {
+  isSpraying = false;
+  digitalWrite(PUMP_RELAY_PIN, LOW);
+  sprayerServo.write(SERVO_OFF_POSITION);
+  Serial.println("Spraying stopped!");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  Serial.println("PlantGuard Spraying System Initializing...");
+
+  // Initialize components
+  pinMode(PUMP_RELAY_PIN, OUTPUT);
+  digitalWrite(PUMP_RELAY_PIN, LOW);
+  pinMode(SOIL_MOISTURE_PIN, INPUT); 
+  
+  dht.begin();
+  delay(2000);
+
+  // Initialize Servo
+  sprayerServo.setPeriodHertz(50);
+  sprayerServo.attach(SERVO_PIN, 500, 2400);
+  sprayerServo.write(SERVO_OFF_POSITION);
+
+  Serial.println("System Ready!");
+  Serial.println("Type commands in Serial Monitor:");
+  Serial.println(" check   → Check conditions");
+  Serial.println(" start   → Start spraying");
+  Serial.println(" stop    → Stop spraying");
+}
+
+void loop() {
+  // Handle Serial input
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    if (command.equalsIgnoreCase("check")) {
+      checkConditions();
+    } 
+    else if (command.equalsIgnoreCase("start")) {
+      startSpray();
+    } 
+    else if (command.equalsIgnoreCase("stop")) {
+      stopSpray();
+    } 
+    else {
+      Serial.println("Unknown command. Use: check, start, stop");
+    }
+  }
+
+  // Servo oscillation when spraying
+  static unsigned long lastServoMove = 0;
+  static int servoPos = SERVO_SPRAY_POSITION;
+  static bool movingRight = true;
+  
+  if (isSpraying && millis() - lastServoMove > 50) {
+    lastServoMove = millis();
+    
+    if (movingRight) {
+      servoPos += 5;
+      if (servoPos >= 135) movingRight = false;
+    } else {
+      servoPos -= 5;
+      if (servoPos <= 45) movingRight = true;
+    }
+    
+    sprayerServo.write(servoPos);
+  }
+}
